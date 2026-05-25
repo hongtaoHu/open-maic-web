@@ -7,8 +7,6 @@ export interface ClassroomOutlineCache {
   outlineText: string;
   outlines: StreamSceneOutline[];
   languageDirective?: string;
-  /** @deprecated 使用 generatedScenes */
-  firstScene?: GeneratedScene;
   /** 已生成完成的场景（按 order 顺序） */
   generatedScenes?: GeneratedScene[];
   /** 下一个待生成的 outline 索引 */
@@ -19,16 +17,9 @@ export function normalizeGenerationCache(
   cache: ClassroomOutlineCache,
 ): Required<Pick<ClassroomOutlineCache, 'generatedScenes' | 'nextSceneIndex'>> &
   ClassroomOutlineCache {
-  const generatedScenes =
-    cache.generatedScenes?.length
-      ? [...cache.generatedScenes]
-      : cache.firstScene
-        ? [cache.firstScene]
-        : [];
+  const generatedScenes = cache.generatedScenes?.length ? [...cache.generatedScenes] : [];
 
-  const nextSceneIndex =
-    cache.nextSceneIndex ??
-    (generatedScenes.length > 0 ? generatedScenes.length : 0);
+  const nextSceneIndex = cache.nextSceneIndex ?? generatedScenes.length;
 
   return {
     ...cache,

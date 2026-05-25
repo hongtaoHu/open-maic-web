@@ -5,16 +5,25 @@ import { RouterLink } from 'vue-router';
 
 import { useStageStore } from '@/stores/stage';
 import type { Scene } from '@/types/stage';
+import { resolveKeyPointsFromScene } from '@/utils/sceneKeyPoints';
 import { resolveScenePreviewContent } from '@/utils/slidePreview';
 
 import ScenePreview from './ScenePreview.vue';
 import { SIDEBAR_WIDTH_COLLAPSED, useSidebarLayout } from './useSidebarLayout';
 
 const props = defineProps<{
+  classroomId?: string;
   generating?: boolean;
   generatingIndex?: number | null;
   generatingLabel?: string;
+  /** 正在生成中的场景标题（来自 outline） */
+  generatingSceneTitle?: string;
   totalOutlines?: number;
+}>();
+
+const emit = defineEmits<{
+  /** 选中场景时同步讲解要点（keyPoints）到播放区 */
+  selectScene: [payload: { sceneId: string; keyPoints: string[] }];
 }>();
 
 const stageStore = useStageStore();
@@ -29,17 +38,19 @@ const sidebarStyle = computed(() => ({
   width: collapsed.value ? `${SIDEBAR_WIDTH_COLLAPSED}px` : `${width.value}px`,
 }));
 
+/** 仅在「下一个待生成场景」请求中时展示底部 loading，索引须等于已展示场景数 */
 const showPendingLoading = computed(
   () =>
     props.generating &&
     props.generatingIndex != null &&
-    (props.totalOutlines ?? 0) > sortedScenes.value.length,
+    props.generatingIndex === sortedScenes.value.length,
 );
 
-const pendingTitle = computed(() => {
-  const index = props.generatingIndex ?? sortedScenes.value.length;
-  return `场景 ${index + 1}`;
-});
+const pendingIndex = computed(() => (props.generatingIndex ?? 0) + 1);
+
+const pendingTitle = computed(
+  () => props.generatingSceneTitle?.trim() || `场景 ${pendingIndex.value}`,
+);
 
 function isActive(scene: Scene) {
   return scene.id === currentSceneId.value;
@@ -49,12 +60,14 @@ function previewContent(scene: Scene) {
   return resolveScenePreviewContent(scene.content);
 }
 
-function selectScene(sceneId: string) {
-  stageStore.setCurrentScene(sceneId);
+function selectScene(scene: Scene) {
+  const keyPoints = resolveKeyPointsFromScene(scene, props.classroomId);
+  stageStore.setCurrentScene(scene.id);
+  emit('selectScene', { sceneId: scene.id, keyPoints });
 }
 
-function onCollapsedSceneClick(sceneId: string) {
-  selectScene(sceneId);
+function onCollapsedSceneClick(scene: Scene) {
+  selectScene(scene);
   if (collapsed.value) {
     collapsed.value = false;
   }
@@ -151,7 +164,7 @@ function onResizePointerDown(event: PointerEvent) {
               type="button"
               class="classroom-sidebar__scene"
               :aria-current="isActive(scene) ? 'true' : undefined"
-              @click="selectScene(scene.id)"
+              @click="selectScene(scene)"
             >
               <span class="classroom-sidebar__scene-head">
                 <span class="classroom-sidebar__index">{{ scene.order + 1 }}</span>
@@ -173,7 +186,7 @@ function onResizePointerDown(event: PointerEvent) {
           >
             <div class="classroom-sidebar__scene classroom-sidebar__scene--pending">
               <span class="classroom-sidebar__scene-head">
-                <span class="classroom-sidebar__index">{{ (generatingIndex ?? 0) + 1 }}</span>
+                <span class="classroom-sidebar__index">{{ pendingIndex }}</span>
                 <span class="classroom-sidebar__title">{{ pendingTitle }}</span>
               </span>
               <ScenePreview
@@ -203,7 +216,7 @@ function onResizePointerDown(event: PointerEvent) {
           :title="`${scene.order + 1}. ${scene.title}`"
           :aria-label="`${scene.order + 1}. ${scene.title}`"
           :aria-current="isActive(scene) ? 'true' : undefined"
-          @click="onCollapsedSceneClick(scene.id)"
+          @click="onCollapsedSceneClick(scene)"
         >
           {{ scene.order + 1 }}
         </button>

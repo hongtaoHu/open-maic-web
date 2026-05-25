@@ -18,7 +18,9 @@ import {
   saveClassroomOutlineCache,
   scenesFromStreamOutlines,
 } from '@/utils/classroomStream';
-import { normalizeSlidePayload, hasSlideElements, hasRenderableSlideContent } from '@/utils/slidePreview';
+import { resolveKeyPointsFromGeneration } from '@/utils/sceneKeyPoints';
+import { ensureSceneTtsCached } from '@/utils/sceneTtsCache';
+import { normalizeSlidePayload, hasSlideElements } from '@/utils/slidePreview';
 
 export function normalizeGeneratedScene(generated: GeneratedScene): GeneratedScene {
   return {
@@ -63,9 +65,10 @@ function mergeGeneratedIntoScene(base: Scene, generated: GeneratedScene): Scene 
 
   return {
     ...base,
-    id: generated.id || base.id,
+    id: base.id,
     type: normalizeSceneType(generated.type, base.type),
     title: generated.title || base.title,
+    order: base.order,
     content: hasSlideElements(slidePayload)
       ? { ...outlineMeta, ...slidePayload }
       : { ...outlineMeta, ...normalized.content },
@@ -108,7 +111,8 @@ export function mapClassroomOutlineList(raw: unknown): SceneOutline[] {
 export function getSortedStreamOutlines(outlines: SceneOutline[]): SceneOutline[] {
   return [...outlines]
     .filter((outline) => outline?.title?.trim())
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((outline, index) => ({ ...outline, order: index }));
 }
 
 export function toGenerateSceneOutline(
@@ -233,58 +237,24 @@ export function buildSceneFromGenerated(
   index: number,
   generated: GeneratedScene,
 ): Scene {
-  const base = scenesFromStreamOutlines(classroomId, [outline])[0];
+  const outlineWithOrder = { ...outline, order: index };
+  const sceneId = outline.id ?? `scene-${classroomId}-${index}`;
+  const base = scenesFromStreamOutlines(classroomId, [outlineWithOrder])[0];
   if (!base) {
     return {
-      id: generated.id || `scene-${classroomId}-${index}`,
+      id: sceneId,
       stageId: classroomId,
       type: normalizeSceneType(generated.type),
-      title: generated.title,
-      order: generated.order ?? index,
-      content: generated.content ?? {},
+      title: generated.title || outline.title,
+      order: index,
+      content: normalizeGeneratedScene(generated).content ?? {},
     };
   }
-  return mergeGeneratedIntoScene(base, generated);
-}
-
-export function buildScenesFromGeneratedList(
-  classroomId: string,
-  outlines: SceneOutline[],
-  generatedScenes: GeneratedScene[],
-): Scene[] {
-  const sorted = getSortedStreamOutlines(outlines);
-  const baseScenes = scenesFromStreamOutlines(classroomId, sorted);
-  return baseScenes.map((base, index) => {
-    const generated = generatedScenes[index];
-    if (!generated) return base;
-    return mergeGeneratedIntoScene(base, normalizeGeneratedScene(generated));
-  });
-}
-
-export function shouldHydrateStageFromCache(
-  classroomId: string,
-  cache: ClassroomOutlineCache,
-): boolean {
-  const stageStore = useStageStore();
-  const normalized = normalizeGenerationCache(cache);
-  if (stageStore.stage?.id !== classroomId) return true;
-  if (stageStore.scenes.length < normalized.outlines.length) return true;
-  if (stageStore.scenes.length < normalized.generatedScenes.length) return true;
-
-  for (let index = 0; index < normalized.generatedScenes.length; index += 1) {
-    const generated = normalizeGeneratedScene(normalized.generatedScenes[index]);
-    const scene =
-      stageStore.scenes.find((item) => item.order === index) ?? stageStore.scenes[index];
-    if (!scene) return true;
-    if (
-      !hasRenderableSlideContent(scene.content) &&
-      hasRenderableSlideContent(generated.content)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+  return {
+    ...mergeGeneratedIntoScene({ ...base, id: sceneId, order: index }, generated),
+    id: sceneId,
+    order: index,
+  };
 }
 
 function persistGenerationCache(
@@ -309,100 +279,130 @@ function persistGenerationCache(
   });
 }
 
-export function hydrateStageFromGenerationCache(
+/** 大纲就绪后写入 sessionStorage（不含 scene 内容，由 classroom 顺序生成） */
+export function saveOutlineCacheOnReady(
   classroomId: string,
-  cache: ClassroomOutlineCache,
-  input: ClassroomStreamStartInput,
+  outlines: SceneOutline[],
+  options: {
+    outlineText?: string;
+    languageDirective?: string;
+    preserveProgress?: boolean;
+  } = {},
 ) {
-  const normalized = normalizeGenerationCache(cache);
+  const sorted = getSortedStreamOutlines(outlines);
+  const existing = loadClassroomOutlineCache(classroomId);
+  const normalized = existing ? normalizeGenerationCache(existing) : null;
+
+  const preserve = options.preserveProgress && normalized?.classroomId === classroomId;
+
+  saveClassroomOutlineCache({
+    classroomId,
+    outlineText: options.outlineText ?? normalized?.outlineText ?? '',
+    outlines: sorted,
+    languageDirective: options.languageDirective ?? normalized?.languageDirective,
+    generatedScenes: preserve ? normalized!.generatedScenes : [],
+    nextSceneIndex: preserve ? normalized!.nextSceneIndex : 0,
+  });
+}
+
+export function ensureStageFromStreamInput(
+  classroomId: string,
+  input: ClassroomStreamStartInput,
+  cache: ClassroomOutlineCache,
+) {
   const stageStore = useStageStore();
-  const sorted = getSortedStreamOutlines(normalized.outlines);
+  const normalized = normalizeGenerationCache(cache);
   const directive =
     normalized.languageDirective?.trim() ||
     stageStore.stage?.languageDirective?.trim() ||
     '';
 
-  const scenes = buildScenesFromGeneratedList(
-    classroomId,
-    sorted,
-    normalized.generatedScenes,
-  );
-
-  stageStore.initStageWithGeneratedScenes(classroomId, {
-    name: input.userQuestion?.trim() || '课堂',
-    description: input.systemPrompt?.trim() || undefined,
-    agentIds: input.agentConfigs.map((agent) => agent.id),
-    languageDirective: directive || undefined,
-  }, scenes);
-}
-
-/** 首个场景生成完成后：仅写入第一个场景并跳转 */
-export function applyInitialGeneratedScene(
-  classroomId: string,
-  outlines: SceneOutline[],
-  generated: GeneratedScene | null | undefined,
-  options: {
-    input: ClassroomStreamStartInput;
-    languageDirective?: string;
-    outlineText?: string;
-  },
-) {
-  if (!generated) return;
-
-  const normalized = normalizeGeneratedScene(generated);
-  const stageStore = useStageStore();
-  const sorted = getSortedStreamOutlines(outlines);
-  const directive =
-    options.languageDirective?.trim() ||
-    stageStore.stage?.languageDirective?.trim() ||
-    '';
-
-  const scenes = buildScenesFromGeneratedList(classroomId, sorted, [normalized]);
-
-  stageStore.initStageWithGeneratedScenes(
-    classroomId,
-    {
-      name: options.input.userQuestion?.trim() || '课堂',
-      description: options.input.systemPrompt?.trim() || undefined,
-      agentIds: options.input.agentConfigs.map((agent) => agent.id),
+  if (stageStore.stage?.id !== classroomId) {
+    stageStore.initStageFromOutlines(classroomId, {
+      name: input.userQuestion?.trim() || '课堂',
+      description: input.systemPrompt?.trim() || undefined,
+      agentIds: input.agentConfigs.map((agent) => agent.id),
       languageDirective: directive || undefined,
-    },
-    scenes,
-  );
+    });
+    return;
+  }
 
-  persistGenerationCache(classroomId, {
-    outlineText: options.outlineText ?? '',
-    outlines: sorted,
-    languageDirective: directive || undefined,
-    generatedScenes: [normalized],
-    nextSceneIndex: 1,
+  stageStore.ensureStageForClassroom(classroomId, {
+    name: input.userQuestion?.trim() || stageStore.stage?.name,
+    description: input.systemPrompt?.trim() || stageStore.stage?.description,
+    agentIds: input.agentConfigs.map((agent) => agent.id),
   });
 }
 
+/** 将缓存中已生成的场景逐个追加到 store（不占位未生成的 outline） */
+export function restoreCachedScenesToStore(
+  classroomId: string,
+  cache: ClassroomOutlineCache,
+  input: ClassroomStreamStartInput,
+) {
+  const stageStore = useStageStore();
+  ensureStageFromStreamInput(classroomId, input, cache);
+  const normalized = normalizeGenerationCache(cache);
+  const sorted = getSortedStreamOutlines(normalized.outlines);
+
+  const lastCachedIndex = normalized.generatedScenes.length - 1;
+  for (let index = 0; index <= lastCachedIndex; index += 1) {
+    const generated = normalized.generatedScenes[index];
+    if (!generated) continue;
+    const alreadyInStore = stageStore.scenes.some((scene) => scene.order === index);
+    if (alreadyInStore) continue;
+    appendGeneratedSceneToStore(classroomId, sorted, index, generated, {
+      activate: index === lastCachedIndex,
+    });
+  }
+}
+
 /** 顺序生成队列中追加一个已完成的场景 */
+function scheduleSceneTtsPrefetch(
+  classroomId: string,
+  outline: SceneOutline,
+  index: number,
+  generated: GeneratedScene,
+  contentResponse?: GenerateSceneContentRawResult | null,
+) {
+  const sceneId = outline.id ?? `scene-${classroomId}-${index}`;
+  const keyPoints = resolveKeyPointsFromGeneration(
+    outline,
+    contentResponse,
+    generated,
+  );
+  void ensureSceneTtsCached({
+    classroomId,
+    sceneId,
+    sceneOrder: index,
+    keyPoints,
+  }).catch(() => {
+    /* 预合成失败不阻塞场景展示 */
+  });
+}
+
 export function appendGeneratedSceneToStore(
   classroomId: string,
   outlines: SceneOutline[],
   index: number,
   generated: GeneratedScene,
-  _options?: {
-    input: ClassroomStreamStartInput;
-    languageDirective?: string;
-    outlineText?: string;
-  },
+  options?: { activate?: boolean; contentResponse?: GenerateSceneContentRawResult | null },
 ) {
   const stageStore = useStageStore();
   const sorted = getSortedStreamOutlines(outlines);
   const outline = sorted[index];
   if (!outline) return;
 
-  const scene = buildSceneFromGenerated(
+  const normalized = normalizeGeneratedScene(generated);
+  const scene = buildSceneFromGenerated(classroomId, outline, index, normalized);
+  stageStore.appendScene(scene, { activate: options?.activate ?? true });
+  scheduleSceneTtsPrefetch(
     classroomId,
     outline,
     index,
-    normalizeGeneratedScene(generated),
+    normalized,
+    options?.contentResponse,
   );
-  stageStore.appendScene(scene);
 }
 
 export async function generateSceneAtIndex(params: {
@@ -413,7 +413,10 @@ export async function generateSceneAtIndex(params: {
   stage: Stage | null;
   languageDirective?: string;
   llm?: GenerateLlmHeadersOptions;
-}): Promise<GeneratedScene | null> {
+}): Promise<{
+  generated: GeneratedScene;
+  contentResponse: GenerateSceneContentRawResult;
+} | null> {
   const sorted = getSortedStreamOutlines(params.outlines);
   const outline = sorted[params.index];
   if (!outline) return null;
@@ -427,22 +430,26 @@ export async function generateSceneAtIndex(params: {
     languageDirective: params.languageDirective,
   });
 
-  const res = await generateSceneContent(body, params.llm);
+  const res = (await generateSceneContent(body, params.llm)) as GenerateSceneContentRawResult;
   if (!res.success) return null;
 
-  return toGeneratedSceneFromContentResponse(res, outline, params.index);
+  const generated = toGeneratedSceneFromContentResponse(res, outline, params.index);
+  if (!generated) return null;
+  return { generated, contentResponse: res };
 }
 
-/** @deprecated 使用 applyInitialGeneratedScene */
-export function applyFirstSceneToStore(
+export function persistSceneGenerationProgress(
   classroomId: string,
-  outlines: SceneOutline[],
-  generated: GeneratedScene | null | undefined,
-  options: {
-    input: ClassroomStreamStartInput;
-    languageDirective?: string;
-    outlineText?: string;
-  },
+  cache: ClassroomOutlineCache,
+  generatedScenes: GeneratedScene[],
+  nextSceneIndex: number,
 ) {
-  applyInitialGeneratedScene(classroomId, outlines, generated, options);
+  const normalized = normalizeGenerationCache(cache);
+  persistGenerationCache(classroomId, {
+    outlineText: normalized.outlineText,
+    outlines: normalized.outlines,
+    languageDirective: normalized.languageDirective,
+    generatedScenes,
+    nextSceneIndex,
+  });
 }

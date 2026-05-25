@@ -2,48 +2,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
-import type { GeneratedScene } from '@/types/generate';
-import type { SceneOutline as StreamSceneOutline } from '@/types/classroom-stream';
-import type { Scene, SceneType, Stage, StageMode } from '@/types/stage';
-import { scenesFromStreamOutlines } from '@/utils/classroomStream';
-import { hasSlideElements, normalizeSlidePayload } from '@/utils/slidePreview';
-
-const SCENE_TYPES: SceneType[] = ['slide', 'quiz', 'interactive', 'pbl'];
-
-function normalizeSceneType(type: string | undefined, fallback: SceneType = 'slide'): SceneType {
-  const normalized = (type ?? '').trim().toLowerCase() as SceneType;
-  return SCENE_TYPES.includes(normalized) ? normalized : fallback;
-}
-
-function mergeFirstScene(
-  base: Scene,
-  firstScene: GeneratedScene,
-): Scene {
-  const slidePayload = normalizeSlidePayload(firstScene.content);
-  const outlineMeta: Record<string, unknown> = {};
-  for (const key of [
-    'description',
-    'keyPoints',
-    'estimatedMinutes',
-    'languageNote',
-    'widgetType',
-    'widgetOutline',
-  ] as const) {
-    if (base.content[key] !== undefined) {
-      outlineMeta[key] = base.content[key];
-    }
-  }
-
-  return {
-    ...base,
-    id: firstScene.id || base.id,
-    type: normalizeSceneType(firstScene.type, base.type),
-    title: firstScene.title || base.title,
-    content: hasSlideElements(slidePayload)
-      ? { ...outlineMeta, ...slidePayload }
-      : { ...base.content, ...firstScene.content },
-  };
-}
+import type { Scene, Stage, StageMode } from '@/types/stage';
 
 function now() {
   return Date.now();
@@ -145,7 +104,8 @@ export const useStageStore = defineStore('stage', () => {
     };
   }
 
-  function initStageWithGeneratedScenes(
+  /** 仅初始化 Stage，不预创建 scene 占位 */
+  function initStageFromOutlines(
     classroomId: string,
     params: {
       name: string;
@@ -153,7 +113,6 @@ export const useStageStore = defineStore('stage', () => {
       agentIds?: string[];
       languageDirective?: string;
     },
-    generatedScenes: Scene[],
   ) {
     const ts = now();
     const languageDirective =
@@ -163,63 +122,40 @@ export const useStageStore = defineStore('stage', () => {
       name: params.name,
       description: params.description,
       languageDirective,
-      createdAt: ts,
+      createdAt: stage.value?.id === classroomId ? (stage.value.createdAt ?? ts) : ts,
       updatedAt: ts,
       agentIds: params.agentIds?.length ? params.agentIds : ['default-1'],
     };
-    scenes.value = [...generatedScenes].sort((a, b) => a.order - b.order);
-    currentSceneId.value =
-      scenes.value.find((scene) => scene.order === 0)?.id ??
-      scenes.value[0]?.id ??
-      null;
+    scenes.value = [];
+    currentSceneId.value = null;
   }
 
-  function appendScene(scene: Scene) {
-    const byId = scenes.value.findIndex((item) => item.id === scene.id);
+  function appendScene(scene: Scene, options?: { activate?: boolean }) {
     const byOrder = scenes.value.findIndex((item) => item.order === scene.order);
-    const index = byId >= 0 ? byId : byOrder;
-    if (index >= 0) {
+    let resolvedId = scene.id;
+
+    if (byOrder >= 0) {
+      resolvedId = scenes.value[byOrder].id;
       scenes.value = scenes.value.map((item, itemIndex) =>
-        itemIndex === index ? { ...scene, id: item.id } : item,
+        itemIndex === byOrder ? { ...scene, id: resolvedId, order: scene.order } : item,
       );
-      return;
+    } else {
+      scenes.value = [...scenes.value, { ...scene, id: resolvedId }].sort(
+        (a, b) => a.order - b.order,
+      );
     }
-    scenes.value = [...scenes.value, scene].sort((a, b) => a.order - b.order);
+
+    if (options?.activate) {
+      currentSceneId.value = resolvedId;
+    } else if (!currentSceneId.value) {
+      currentSceneId.value =
+        scenes.value.find((item) => item.order === 0)?.id ?? scenes.value[0]?.id ?? null;
+    }
   }
 
-  function loadFromOutlineCache(
-    classroomId: string,
-    params: {
-      name: string;
-      outlines: StreamSceneOutline[];
-      description?: string;
-      agentIds?: string[];
-      languageDirective?: string;
-      firstScene?: GeneratedScene;
-    },
-  ) {
-    const ts = now();
-    const languageDirective =
-      params.languageDirective ?? stage.value?.languageDirective;
-    stage.value = {
-      id: classroomId,
-      name: params.name,
-      description: params.description,
-      languageDirective,
-      createdAt: ts,
-      updatedAt: ts,
-      agentIds: params.agentIds?.length ? params.agentIds : ['default-1'],
-    };
-    scenes.value = scenesFromStreamOutlines(classroomId, params.outlines);
-    if (params.firstScene && scenes.value.length) {
-      const firstIndex = scenes.value.findIndex((scene) => scene.order === 0);
-      const index = firstIndex >= 0 ? firstIndex : 0;
-      scenes.value[index] = mergeFirstScene(scenes.value[index], params.firstScene);
-    }
-    currentSceneId.value =
-      scenes.value.find((scene) => scene.order === 0)?.id ??
-      scenes.value[0]?.id ??
-      null;
+  function resetScenes() {
+    scenes.value = [];
+    currentSceneId.value = null;
   }
 
   return {
@@ -231,9 +167,9 @@ export const useStageStore = defineStore('stage', () => {
     currentScene,
     createDemoStage,
     ensureStageForClassroom,
-    initStageWithGeneratedScenes,
+    initStageFromOutlines,
     appendScene,
-    loadFromOutlineCache,
+    resetScenes,
     setLanguageDirective,
     setCurrentScene,
   };

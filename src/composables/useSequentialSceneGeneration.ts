@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-import { onUnmounted, ref, watch, type Ref } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch, type Ref } from 'vue';
 
 import { getApiErrorMessage, reportBusinessError } from '@/api';
 import { useSettingsStore } from '@/stores/settings';
@@ -9,13 +9,14 @@ import { normalizeGenerationCache } from '@/utils/classroomGenerationCache';
 import {
   loadClassroomOutlineCache,
   loadClassroomStreamInput,
-  saveClassroomOutlineCache,
 } from '@/utils/classroomStream';
 import {
   appendGeneratedSceneToStore,
+  ensureStageFromStreamInput,
   generateSceneAtIndex,
-  hydrateStageFromGenerationCache,
-  shouldHydrateStageFromCache,
+  getSortedStreamOutlines,
+  persistSceneGenerationProgress,
+  restoreCachedScenesToStore,
 } from '@/utils/sceneContentGenerate';
 
 export function useSequentialSceneGeneration(classroomId: Ref<string | undefined>) {
@@ -23,13 +24,22 @@ export function useSequentialSceneGeneration(classroomId: Ref<string | undefined
   const stageStore = useStageStore();
 
   const generating = ref(false);
+  /** 当前正在请求 API 的 outline 索引（与 store.scenes.length 对齐时才展示侧边栏 loading） */
   const generatingIndex = ref<number | null>(null);
   const statusLabel = ref('');
   const error = ref<string | null>(null);
+  const initError = ref<string | null>(null);
   const totalOutlines = ref(0);
   const completedCount = ref(0);
+  const outlineTitles = ref<string[]>([]);
 
   let aborted = false;
+
+  const generatingSceneTitle = computed(() => {
+    const index = generatingIndex.value;
+    if (index == null) return '';
+    return outlineTitles.value[index] ?? `场景 ${index + 1}`;
+  });
 
   async function runQueue() {
     const id = classroomId.value;
@@ -37,31 +47,68 @@ export function useSequentialSceneGeneration(classroomId: Ref<string | undefined
 
     const rawCache = loadClassroomOutlineCache(id);
     const input = loadClassroomStreamInput();
-    if (!rawCache?.outlines?.length || !input) return;
+    if (!rawCache?.outlines?.length || !input) {
+      initError.value = '缺少课堂大纲或编排参数，请从首页重新进入';
+      return;
+    }
 
+    initError.value = null;
     const cache = normalizeGenerationCache(rawCache);
-    totalOutlines.value = cache.outlines.length;
+    const sortedOutlines = getSortedStreamOutlines(cache.outlines);
+    totalOutlines.value = sortedOutlines.length;
+    outlineTitles.value = sortedOutlines.map((outline) => outline.title);
     completedCount.value = cache.generatedScenes.length;
+
+    ensureStageFromStreamInput(id, input, cache);
+    if (cache.generatedScenes.length === 0 && cache.nextSceneIndex === 0) {
+      stageStore.resetScenes();
+    }
+    restoreCachedScenesToStore(id, cache, input);
+    completedCount.value = stageStore.scenes.length;
 
     if (isSceneGenerationComplete(cache)) {
       statusLabel.value = '';
+      generatingIndex.value = null;
       return;
     }
 
     generating.value = true;
     error.value = null;
+    generatingIndex.value = null;
 
     try {
       let nextIndex = cache.nextSceneIndex;
       let generatedScenes = [...cache.generatedScenes];
 
-      while (nextIndex < cache.outlines.length && !aborted) {
-        generatingIndex.value = nextIndex;
-        statusLabel.value = `正在生成第 ${nextIndex + 1}/${cache.outlines.length} 个场景…`;
+      while (nextIndex < sortedOutlines.length && !aborted) {
+        const alreadyInStore = stageStore.scenes.some((scene) => scene.order === nextIndex);
+        const cachedScene = generatedScenes[nextIndex];
 
-        const scene = await generateSceneAtIndex({
+        if (alreadyInStore && cachedScene) {
+          nextIndex += 1;
+          completedCount.value = stageStore.scenes.length;
+          persistSceneGenerationProgress(id, cache, generatedScenes, nextIndex);
+          continue;
+        }
+
+        if (cachedScene && !alreadyInStore) {
+          appendGeneratedSceneToStore(id, sortedOutlines, nextIndex, cachedScene, {
+            activate: true,
+          });
+          nextIndex += 1;
+          completedCount.value = stageStore.scenes.length;
+          persistSceneGenerationProgress(id, cache, generatedScenes, nextIndex);
+          await nextTick();
+          continue;
+        }
+
+        generatingIndex.value = nextIndex;
+        statusLabel.value = `正在生成第 ${nextIndex + 1}/${sortedOutlines.length} 个场景…`;
+        await nextTick();
+
+        const generationResult = await generateSceneAtIndex({
           classroomId: id,
-          outlines: cache.outlines,
+          outlines: sortedOutlines,
           index: nextIndex,
           input,
           stage: stageStore.stage,
@@ -73,31 +120,34 @@ export function useSequentialSceneGeneration(classroomId: Ref<string | undefined
           },
         });
 
-        if (!scene) {
+        generatingIndex.value = null;
+
+        if (!generationResult) {
           const message = `第 ${nextIndex + 1} 个场景内容生成失败`;
           error.value = message;
           reportBusinessError(message);
           break;
         }
 
-        appendGeneratedSceneToStore(id, cache.outlines, nextIndex, scene, {
-          input,
-          languageDirective: cache.languageDirective,
-          outlineText: cache.outlineText,
-        });
+        const { generated, contentResponse } = generationResult;
 
-        generatedScenes = [...generatedScenes, scene];
+        if (!generatedScenes[nextIndex]) {
+          generatedScenes = [...generatedScenes];
+          generatedScenes[nextIndex] = generated;
+        }
+
+        appendGeneratedSceneToStore(id, sortedOutlines, nextIndex, generated, {
+          activate: true,
+          contentResponse,
+        });
         nextIndex += 1;
-        completedCount.value = generatedScenes.length;
+        completedCount.value = stageStore.scenes.length;
 
-        saveClassroomOutlineCache({
-          ...cache,
-          generatedScenes,
-          nextSceneIndex: nextIndex,
-        });
+        persistSceneGenerationProgress(id, cache, generatedScenes, nextIndex);
+        await nextTick();
       }
 
-      if (!aborted && nextIndex >= cache.outlines.length) {
+      if (!aborted && nextIndex >= sortedOutlines.length) {
         statusLabel.value = '';
       }
     } catch (e) {
@@ -116,18 +166,6 @@ export function useSequentialSceneGeneration(classroomId: Ref<string | undefined
     classroomId,
     (id) => {
       if (!id) return;
-      const rawCache = loadClassroomOutlineCache(id);
-      const input = loadClassroomStreamInput();
-      if (!rawCache?.outlines?.length || !input) return;
-
-      const cache = normalizeGenerationCache(rawCache);
-      totalOutlines.value = cache.outlines.length;
-      completedCount.value = cache.generatedScenes.length;
-
-      if (shouldHydrateStageFromCache(id, cache)) {
-        hydrateStageFromGenerationCache(id, cache, input);
-      }
-
       void runQueue();
     },
     { immediate: true },
@@ -140,8 +178,10 @@ export function useSequentialSceneGeneration(classroomId: Ref<string | undefined
   return {
     generating,
     generatingIndex,
+    generatingSceneTitle,
     statusLabel,
     error,
+    initError,
     totalOutlines,
     completedCount,
     runQueue,

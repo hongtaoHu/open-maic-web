@@ -40,3 +40,4 @@ export * from '@/api/models/classroom';
 export * from '@/api/models/classroom-stream';
 export * from '@/api/models/generate';
 export * from '@/api/models/server';
+export * from '@/api/models/tts';

@@ -3,28 +3,22 @@ import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import {
-  generateSceneContent,
   getApiErrorMessage,
   getClassroom,
-  reportBusinessError,
 } from '@/api';
 import { OmButton, OmCard } from '@/components/ui';
 import {
   useClassroomStream,
   type ClassroomOutlinesReadyContext,
 } from '@/composables/useClassroomStream';
-import { useSettingsStore } from '@/stores/settings';
-import { useStageStore } from '@/stores/stage';
 import {
   loadClassroomOutlineCache,
   loadClassroomStreamInput,
 } from '@/utils/classroomStream';
 import {
-  applyInitialGeneratedScene,
-  buildSceneContentRequest,
   getSortedStreamOutlines,
   mapClassroomOutlineList,
-  toGeneratedSceneFromContentResponse,
+  saveOutlineCacheOnReady,
 } from '@/utils/sceneContentGenerate';
 import type { ClassroomStreamStartInput } from '@/types/classroom-stream';
 import type { ClassroomRecord, OutlineStatus } from '@/types/classroom';
@@ -34,8 +28,6 @@ const props = defineProps<{
 }>();
 
 const router = useRouter();
-const settings = useSettingsStore();
-const stageStore = useStageStore();
 const {
   streaming,
   error,
@@ -45,7 +37,6 @@ const {
   stop,
 } = useClassroomStream();
 
-const generatingFirstScene = ref(false);
 const pollingOutline = ref(false);
 
 const OUTLINE_POLL_MS = 2000;
@@ -127,17 +118,12 @@ async function continueWithSavedOutlines(
     outlineText.value = cache.outlineText;
   }
 
-  if (cache?.generatedScenes?.length) {
-    enterClassroom(classroomId);
-    return;
-  }
-
-  await onOutlinesReady({
-    classroomId,
-    outlines,
-    input,
-    languageDirective: cache?.languageDirective ?? '',
+  saveOutlineCacheOnReady(classroomId, outlines, {
+    outlineText: cache?.outlineText ?? outlineText.value,
+    languageDirective: cache?.languageDirective,
+    preserveProgress: true,
   });
+  enterClassroom(classroomId);
 }
 
 async function handleOutlineStatus(
@@ -186,60 +172,19 @@ function enterClassroom(classroomId?: string) {
 
 async function onOutlinesReady(ctx: ClassroomOutlinesReadyContext) {
   const sorted = getSortedStreamOutlines(ctx.outlines);
-  const firstOutline = sorted[0];
-  if (!firstOutline) {
+  if (!sorted.length) {
     error.value = '未获取到课程大纲，请重试';
     return;
   }
 
-  generatingFirstScene.value = true;
-  statusLabel.value = '正在生成首个场景内容…';
-
-  try {
-    const body = buildSceneContentRequest({
-      classroomId: ctx.classroomId,
-      outline: firstOutline,
-      allOutlines: sorted,
-      input: ctx.input,
-      stage: stageStore.stage,
-      languageDirective: ctx.languageDirective,
-    });
-
-    const res = await generateSceneContent(body, {
-      apiKey: settings.apiKey || undefined,
-      baseUrl: settings.baseUrl || undefined,
-      model: settings.model || undefined,
-    });
-
-    if (!res.success) {
-      const message = res.error || '首个场景内容生成失败';
-      reportBusinessError(message);
-      error.value = message;
-      return;
-    }
-
-    const scene = toGeneratedSceneFromContentResponse(res, firstOutline, 0);
-    if (!scene) {
-      error.value = '首个场景内容解析失败，请重试';
-      return;
-    }
-
-    applyInitialGeneratedScene(ctx.classroomId, sorted, scene, {
-      input: ctx.input,
-      languageDirective: ctx.languageDirective,
-      outlineText: outlineText.value,
-    });
-
-    enterClassroom(ctx.classroomId);
-  } catch (e) {
-    error.value = getApiErrorMessage(e);
-  } finally {
-    generatingFirstScene.value = false;
-  }
+  saveOutlineCacheOnReady(ctx.classroomId, sorted, {
+    outlineText: outlineText.value,
+    languageDirective: ctx.languageDirective,
+  });
+  enterClassroom(ctx.classroomId);
 }
 
-const isBusy = () =>
-  streaming.value || generatingFirstScene.value || pollingOutline.value;
+const isBusy = () => streaming.value || pollingOutline.value;
 
 async function bootstrap() {
   const input = loadClassroomStreamInput();
@@ -314,7 +259,7 @@ onUnmounted(() => {
           </p>
 
           <span
-            v-if="generatingFirstScene || pollingOutline"
+            v-if="pollingOutline"
             class="gen-preview__spinner mt-4"
             aria-hidden="true"
           />
