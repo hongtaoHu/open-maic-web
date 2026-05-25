@@ -1,0 +1,24 @@
+/**
+ * Structural theme styles. Color values are injected from app-ui-theme.ts
+ * (sourced from theme/configs PRESET_THEMES + CHART_PRESET_THEMES).
+ */
+
+[data-theme='light'] {
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+.om-page-bg {
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -20%, var(--om-orb-1) 0%, transparent 50%),
+    radial-gradient(ellipse 80% 60% at 100% 50%, var(--om-orb-2) 0%, transparent 45%),
+    radial-gradient(ellipse 70% 50% at 0% 80%, var(--om-orb-3) 0%, transparent 40%),
+    var(--om-bg-page);
+}
+
+.om-logo-gradient {
+  background: linear-gradient(135deg, var(--om-accent-from) 0%, var(--om-accent-to) 100%);
+}

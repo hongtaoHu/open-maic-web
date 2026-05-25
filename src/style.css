@@ -1,0 +1,64 @@
+@import 'tailwindcss';
+@import 'animate.css';
+@import './theme/tokens.css';
+
+@theme {
+  --color-om-page: var(--om-bg-page);
+  --color-om-card: var(--om-bg-card);
+  --color-om-muted: var(--om-bg-muted);
+  --color-om-subtle: var(--om-bg-subtle);
+  --color-om-panel: var(--om-bg-panel);
+  --color-om-chip: var(--om-bg-chip);
+  --color-om-input: var(--om-bg-input);
+  --color-om-fg: var(--om-fg);
+  --color-om-fg-secondary: var(--om-fg-secondary);
+  --color-om-fg-muted: var(--om-fg-muted);
+  --color-om-fg-accent: var(--om-fg-accent);
+  --color-om-fg-on-panel: var(--om-fg-on-panel);
+  --color-om-fg-panel-muted: var(--om-fg-panel-muted);
+  --color-om-fg-on-primary: var(--om-fg-on-primary);
+  --color-om-fg-accent-soft: var(--om-fg-accent-soft);
+  --color-om-fg-inactive: var(--om-fg-inactive);
+  --color-om-fg-link-hover: var(--om-fg-link-hover);
+  --color-om-border: var(--om-border);
+  --color-om-border-panel: var(--om-border-panel);
+  --color-om-primary: var(--om-bg-primary);
+  --color-om-accent-soft: var(--om-bg-accent-soft);
+  --color-om-inactive: var(--om-bg-inactive);
+}
+
+:root {
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  line-height: 1.5;
+  color: var(--om-fg);
+  background: var(--om-bg-page);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--om-fg);
+  background: var(--om-bg-page);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/** Scrollable region with scrollbar hidden (wheel / touch still works). */
+.om-scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.om-scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
