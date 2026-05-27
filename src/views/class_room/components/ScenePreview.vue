@@ -11,6 +11,12 @@ import {
   type SlidePreviewElement,
 } from '@/utils/slidePreview';
 
+import { parseSceneQuizQuestions } from '@/utils/slidePreviewQuiz';
+
+import SceneQuizMainPreview from './SceneQuizMainPreview.vue';
+import SlidePreviewChart from './SlidePreviewChart.vue';
+import SlidePreviewQuiz from './SlidePreviewQuiz.vue';
+
 const props = withDefaults(
   defineProps<{
     type: SceneType;
@@ -32,15 +38,36 @@ const scale = ref(0.25);
 
 const slideModel = computed(() => getSlidePreviewModel(props.content));
 const isMain = computed(() => props.layout === 'main');
-
-const canvasWrapHeight = computed(() =>
-  Math.max(SLIDE_CANVAS_HEIGHT * scale.value, isMain.value ? 180 : 96),
+const sceneQuizQuestions = computed(() => parseSceneQuizQuestions(props.content));
+const showQuizMain = computed(
+  () => props.type === 'quiz' && isMain.value && sceneQuizQuestions.value.length > 0,
 );
+const quizSidebarRaw = computed(() => {
+  const first = sceneQuizQuestions.value[0];
+  if (!first) return props.content ?? {};
+  return {
+    question: first.question,
+    options: first.options.map((option) => ({
+      label: option.label,
+      value: option.value ?? option.id,
+    })),
+    answer: first.answers,
+  };
+});
+const scaledDimensions = computed(() => ({
+  width: SLIDE_CANVAS_WIDTH * scale.value,
+  height: SLIDE_CANVAS_HEIGHT * scale.value,
+}));
 
 function updateScale() {
   const viewport = viewportRef.value;
   if (!viewport) return;
-  const next = computeSlideScale(viewport.clientWidth);
+  const width = viewport.clientWidth;
+  const height = viewport.clientHeight;
+  const next =
+    isMain.value && height > 0
+      ? computeSlideScale(width, height)
+      : computeSlideScale(width);
   if (next > 0) scale.value = next;
 }
 
@@ -84,7 +111,10 @@ function bindResizeObserver() {
     const viewport = viewportRef.value;
     if (!viewport) return;
     updateScale();
-    if (viewport.clientWidth <= 0) {
+    const needsSize =
+      viewport.clientWidth <= 0 ||
+      (isMain.value && viewport.clientHeight <= 0);
+    if (needsSize) {
       rafId = requestAnimationFrame(tryBind);
       return;
     }
@@ -98,7 +128,7 @@ function bindResizeObserver() {
 }
 
 watch(
-  () => [props.content, slideModel.value, props.loading] as const,
+  () => [props.content, slideModel.value, props.loading, props.layout] as const,
   async ([, model, loading]) => {
     if (loading || !model) return;
     await nextTick();
@@ -129,6 +159,7 @@ onUnmounted(() => {
       {
         'scene-preview--main': isMain,
         'scene-preview--has-slide': !!slideModel,
+        'scene-preview--has-quiz': showQuizMain,
         'scene-preview--loading': loading,
       },
     ]"
@@ -144,6 +175,12 @@ onUnmounted(() => {
       <span class="scene-preview__loading-text">{{ loadingLabel }}</span>
     </div>
 
+    <SceneQuizMainPreview
+      v-else-if="showQuizMain"
+      class="scene-preview__quiz-main"
+      :questions="sceneQuizQuestions"
+    />
+
     <div
       v-else-if="slideModel"
       ref="viewportRef"
@@ -152,7 +189,10 @@ onUnmounted(() => {
     >
       <div
         class="scene-preview__canvas-wrap"
-        :style="{ height: `${canvasWrapHeight}px` }"
+        :style="{
+          width: `${scaledDimensions.width}px`,
+          height: `${scaledDimensions.height}px`,
+        }"
       >
         <div
           class="scene-preview__canvas"
@@ -204,6 +244,20 @@ onUnmounted(() => {
             >
               <line v-bind="lineStyle(el)" />
             </svg>
+            <SlidePreviewChart
+              v-else-if="el.type === 'chart'"
+              class="scene-preview__chart"
+              :raw="el.raw"
+              :width="el.width"
+              :height="el.height"
+            />
+            <SlidePreviewQuiz
+              v-else-if="el.type === 'quiz'"
+              class="scene-preview__quiz-el"
+              :raw="el.raw"
+              :layout="layout"
+            />
+
             <div v-else class="scene-preview__fallback" />
           </div>
         </div>
@@ -216,9 +270,12 @@ onUnmounted(() => {
         <div v-for="i in 3" :key="i" class="scene-preview__slide-col" />
       </div>
     </div>
-    <div v-else-if="type === 'quiz'" class="scene-preview__quiz">
-      <div v-for="i in 4" :key="i" class="scene-preview__quiz-row" />
-    </div>
+    <SlidePreviewQuiz
+      v-else-if="type === 'quiz'"
+      class="scene-preview__quiz-scene"
+      :raw="quizSidebarRaw"
+      :layout="layout"
+    />
     <div v-else-if="type === 'interactive'" class="scene-preview__interactive">
       <div class="scene-preview__interactive-pane scene-preview__interactive-pane--main" />
       <div class="scene-preview__interactive-pane" />
@@ -250,8 +307,21 @@ onUnmounted(() => {
 }
 
 .scene-preview--main.scene-preview--has-slide,
+.scene-preview--main.scene-preview--has-quiz,
 .scene-preview--main.scene-preview--loading {
-  min-height: 18rem;
+  min-height: 0;
+}
+
+.scene-preview__quiz-main {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scene-preview__quiz-scene {
+  width: 100%;
+  min-height: 5.5rem;
+  height: 100%;
 }
 
 .scene-preview__loading {
@@ -300,15 +370,23 @@ onUnmounted(() => {
 
 .scene-preview__viewport--main {
   flex: 1;
-  min-height: 12rem;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 0.5rem;
   border: 1px solid var(--om-border-subtle);
 }
 
 .scene-preview__canvas-wrap {
-  width: 100%;
   position: relative;
+  flex-shrink: 0;
   overflow: hidden;
+}
+
+.scene-preview__viewport:not(.scene-preview__viewport--main) .scene-preview__canvas-wrap {
+  width: 100%;
+  max-width: 100%;
 }
 
 .scene-preview__canvas {
@@ -353,7 +431,9 @@ onUnmounted(() => {
 }
 
 .scene-preview__shape,
-.scene-preview__line {
+.scene-preview__line,
+.scene-preview__chart,
+.scene-preview__quiz-el {
   width: 100%;
   height: 100%;
   display: block;

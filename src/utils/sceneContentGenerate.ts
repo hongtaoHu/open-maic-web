@@ -129,6 +129,7 @@ export function toGenerateSceneOutline(
     order: outline.order ?? index,
     estimatedMinutes: outline.estimatedMinutes,
     languageNote: outline.languageNote,
+    quizConfig: outline.quizConfig ?? undefined,
     widgetType: outline.widgetType,
     widgetOutline: outline.widgetOutline as GenerateSceneOutline['widgetOutline'],
   };

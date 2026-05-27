@@ -57,6 +57,7 @@ export interface SceneOutline {
   estimatedMinutes?: number;
   languageNote?: string | null;
   widgetType?: string;
+  quizConfig?: Record<string, unknown>;
   widgetOutline?: Record<string, unknown>;
 }
 

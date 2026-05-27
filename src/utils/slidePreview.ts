@@ -147,7 +147,14 @@ export function slideElementBoxStyle(el: SlidePreviewElement): Record<string, st
   };
 }
 
-export function computeSlideScale(viewportWidth: number): number {
+/** 按宽度适配；传入高度时取 min(宽比, 高比)，保证整页幻灯片可见 */
+export function computeSlideScale(
+  viewportWidth: number,
+  viewportHeight?: number,
+): number {
   if (viewportWidth <= 0) return 0.25;
-  return viewportWidth / SLIDE_CANVAS_WIDTH;
+  const scaleX = viewportWidth / SLIDE_CANVAS_WIDTH;
+  if (viewportHeight == null || viewportHeight <= 0) return scaleX;
+  const scaleY = viewportHeight / SLIDE_CANVAS_HEIGHT;
+  return Math.min(scaleX, scaleY);
 }

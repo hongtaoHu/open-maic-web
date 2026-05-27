@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
+import teacherAvatar from '@/assets/avatars/teacher.png';
 import userAvatar from '@/assets/avatars/user.svg';
 import {
   fetchTtsVoices,
@@ -102,11 +103,6 @@ const speechPlayPending = computed(
 );
 
 const teacherName = computed(() => props.teacher?.name ?? '老师');
-const teacherAvatar = computed(() =>
-  props.teacher
-    ? resolveAgentAvatarUrl(props.teacher.id, props.teacher.avatar)
-    : resolveAgentAvatarUrl('default-1'),
-);
 
 const participantList = computed(() => (props.participants ?? []).slice(0, 3));
 
@@ -572,7 +568,6 @@ onUnmounted(() => {
         <div class="classroom-dock__teacher-figure">
           <div class="classroom-dock__teacher-ring">
             <img
-              v-if="teacherAvatar"
               :src="teacherAvatar"
               :alt="teacherName"
               class="classroom-dock__teacher-avatar"
@@ -588,7 +583,6 @@ onUnmounted(() => {
           @submit.prevent="onSubmit"
         >
           <img
-            v-if="teacherAvatar"
             :src="teacherAvatar"
             :alt="''"
             class="classroom-dock__speech-avatar"

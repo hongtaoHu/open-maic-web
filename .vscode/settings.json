@@ -1,13 +1,20 @@
 {
   "typescript.tsdk": "node_modules/typescript/lib",
   "typescript.enablePromptUseWorkspaceTsdk": true,
-  "typescript.tsconfig": "tsconfig.app.json",
-  "typescript.tsserver.experimental.enableProjectDiagnostics": true,
+  "typescript.tsserver.maxTsServerMemory": 8192,
+  "typescript.tsserver.useSyntaxServer": "never",
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
   "typescript.validate.enable": true,
   "javascript.validate.enable": true,
+  "vue.server.path": "node_modules/@vue/language-server",
   "vue.inlayHints.missingProps": true,
   "vue.updateImportsOnFileMove.enabled": true,
-  "editor.hover.enabled": true,
-  "editor.hover.delay": 300,
-  "problems.showCurrentInStatus": true
+  "vue.server.maxFileSize": 20,
+  "files.associations": {
+    "*.vue": "vue"
+  },
+  "[vue]": {
+    "editor.defaultFormatter": "Vue.volar"
+  },
+  "editor.gotoLocation.multipleDefinitions": "goto"
 }

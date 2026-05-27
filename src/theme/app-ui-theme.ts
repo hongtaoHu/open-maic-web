@@ -20,11 +20,11 @@ const DARK_TEAL = PRESET_THEMES[9]!;
 const DARK_CHART = CHART_PRESET_THEMES[10]!;
 
 export const APP_UI_LIGHT: UiThemeTokens = {
-  '--om-bg-page': '#eef1f8',
+  '--om-bg-page': '#ffffff',
   '--om-bg-card': '#f4f5fa',
   '--om-bg-muted': '#e8ebf4',
   '--om-bg-subtle': '#e2e6f0',
-  '--om-bg-panel': '#dce2ef',
+  '--om-bg-panel': '#ffffff',
   '--om-bg-panel-muted': '#cdd5e5',
   '--om-bg-prompt-input': '#eceff6',
   '--om-bg-chip': '#eceff6',

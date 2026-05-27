@@ -28,6 +28,7 @@ export interface GenerateSceneOutline {
   widgetOutline?: WidgetOutline;
   estimatedMinutes?: number;
   languageNote?: string | null;
+  quizConfig?: Record<string, unknown>;
   [key: string]: unknown;
 }
 

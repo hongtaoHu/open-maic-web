@@ -1,4 +1,8 @@
 {
   "recommendations": ["Vue.volar"],
-  "unwantedRecommendations": ["octref.vetur", "Vue.vscode-typescript-vue-plugin"]
+  "unwantedRecommendations": [
+    "octref.vetur",
+    "johnsoncodehk.volar",
+    "Vue.vscode-typescript-vue-plugin"
+  ]
 }
